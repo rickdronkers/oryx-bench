@@ -9,6 +9,42 @@ Pre-1.0: minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added — ZSA Moonlander support
+
+The Moonlander Mark I is now a first-class geometry alongside the
+Voyager: `oryx-bench init --geometry moonlander` (both Oryx and local
+modes), and the full command surface — `pull`, `show`, `explain`,
+`find`, `lint`, `diff`, `build`, `flash`, `watch` — works against a
+Moonlander project.
+
+- `src/schema/geometry/moonlander.rs` — 72-key `Geometry`
+  implementation: position vocabulary (7 columns per half incl. the
+  `innermost` split-gap column, `mod` row, `thumb_big` + three
+  `thumb_piano_*` keys per cluster), electrical-matrix map, QMK
+  `LAYOUT_moonlander` argument permutation, ASCII grid, and
+  pixel-accurate physical layout with rotated thumb clusters. The
+  canonical (Oryx `keys[]`) ↔ QMK argument correspondence was derived
+  by cross-matching the pinned ZSA fork's Oryx-exported
+  `keymaps/oryx/keymap.c` against the same layout pulled from the Oryx
+  GraphQL endpoint, since the Moonlander's `keyboard.json` carries no
+  `label` fields.
+- `GeometryName::Moonlander` typed enum variant (previously parsed as
+  the forward-compat `Other` catch-all).
+- `examples/moonlander-default/` — the stock "Moonlander Default
+  Layout" pulled from Oryx as a committed fixture, wired into the
+  codegen structural round-trip test, the `qmk c2json` integration
+  check, and three new render snapshots.
+
+### Fixed — Docker build backend hardcoded the Voyager
+
+`src/build/docker.rs` mounted the staged keymap at
+`keyboards/zsa/voyager/...`, compiled `-kb zsa/voyager`, and looked for
+`zsa_voyager_oryx-bench.bin` regardless of the project's configured
+geometry — a leaky abstraction the `Geometry::qmk_keyboard()` method
+existed to prevent. The build backend now resolves all three from the
+project's geometry, so `oryx-bench build` compiles the right board's
+firmware for any registered geometry.
+
 ## [0.2.1] - 2026-04-15
 
 ### Changed — nix build migrated to crane

@@ -1,6 +1,6 @@
 ---
 name: oryx-bench
-description: Manage ZSA keyboard layouts via the oryx-bench CLI. Use when discussing keyboard layouts, key bindings, layer changes, achordion, tap-hold, custom keycodes, key overrides, combos, ZSA, Oryx, Keymapp, QMK, or the ZSA Voyager. v0.1 supports the Voyager geometry only — Moonlander/Ergodox are tracked for a future release. Supports both Oryx-mode (visual editor + local code) and local-only mode (no cloud dependency).
+description: Manage ZSA keyboard layouts via the oryx-bench CLI. Use when discussing keyboard layouts, key bindings, layer changes, achordion, tap-hold, custom keycodes, key overrides, combos, ZSA, Oryx, Keymapp, QMK, or the ZSA Voyager and Moonlander. Supports the Voyager and Moonlander geometries — Ergodox is tracked for a future release. Supports both Oryx-mode (visual editor + local code) and local-only mode (no cloud dependency).
 ---
 
 # oryx-bench
@@ -264,7 +264,8 @@ The Path B behavior is identical in both modes — you always edit
 The CLI is the source of truth for which geometries (Voyager / Moonlander
 / Ergodox) are supported. **Don't hard-code expectations** — run
 `oryx-bench init --help` if the user asks "do you support X?" and read
-the actual `--geometry` accepted values. As of v0.1, only Voyager. Adding
+the actual `--geometry` accepted values. Currently Voyager and
+Moonlander. Adding
 new geometries is documented in `CONTRIBUTING.md` if the user wants to
 contribute.
 

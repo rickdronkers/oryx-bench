@@ -6,7 +6,9 @@
 //! concurrent `oryx-bench build` invocations can't race the cache or
 //! the staged keymap directory, then invokes the bundled
 //! `ghcr.io/enriquefft/oryx-bench-qmk:<tag>` image with the project
-//! mounted and runs `qmk compile -kb zsa/voyager -km oryx-bench`.
+//! mounted and runs `qmk compile -kb <geometry's QMK target> -km
+//! oryx-bench` (e.g. `zsa/voyager`, `zsa/moonlander` — resolved via
+//! `Geometry::qmk_keyboard` from the project's configured geometry).
 //! Captures the resulting `.bin`, sha256s it via [`flash::sha256_of_file`],
 //! and copies into `firmware_path()`.
 //!
@@ -43,10 +45,18 @@ pub const IMAGE_TAG: &str = concat!(
 const DOCKERFILE: &str = include_str!("../../packaging/docker/Dockerfile");
 const FIRMWARE_PIN: &str = include_str!("../../packaging/docker/pin.txt");
 
-/// `qmk compile` writes its output to the project root with this name.
-/// We move it under `.oryx-bench/build/firmware.bin` after staging and
-/// delete the project-root copy so the user's git tree stays clean.
-const QMK_OUTPUT_NAMES: &[&str] = &["zsa_voyager_oryx-bench.bin", "oryx-bench.bin"];
+/// `qmk compile` names its output `<keyboard with '/'→'_'>_<keymap>.bin`
+/// (e.g. `zsa_voyager_oryx-bench.bin`). We move it under
+/// `.oryx-bench/build/firmware.bin` after staging and delete the
+/// project-root copy so the user's git tree stays clean. The bare
+/// `oryx-bench.bin` fallback covers QMK versions that name the copy in
+/// the make CWD after the keymap alone.
+fn qmk_output_names(qmk_keyboard: &str) -> [String; 2] {
+    [
+        format!("{}_oryx-bench.bin", qmk_keyboard.replace('/', "_")),
+        "oryx-bench.bin".to_string(),
+    ]
+}
 
 /// Ensure the Docker image is available locally.
 ///
@@ -105,6 +115,20 @@ fn ensure_image() -> Result<()> {
 }
 
 pub fn build(project: &Project, generated: &Generated, dry_run: bool) -> Result<BuildOutput> {
+    // kb.toml validation guarantees the geometry is registered, but the
+    // build backend re-resolves it rather than assuming — a stale
+    // Project deserialized from elsewhere must not silently build the
+    // wrong board's firmware.
+    let geometry_slug = project.cfg.layout.geometry.as_str();
+    let geom = crate::schema::geometry::get(geometry_slug).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown geometry '{}' — supported: {}",
+            geometry_slug,
+            crate::schema::geometry::supported_slugs()
+        )
+    })?;
+    let qmk_keyboard = geom.qmk_keyboard();
+
     let dir = build_dir(project);
     fsx::ensure_dir(&dir)?;
 
@@ -202,13 +226,15 @@ pub fn build(project: &Project, generated: &Generated, dry_run: bool) -> Result<
     }
     // Bind-mount the project root at /work (for QMK output) and the
     // staged keymap directory into the firmware tree where QMK expects
-    // it: /firmware/keyboards/zsa/voyager/keymaps/oryx-bench/.
+    // it: /firmware/keyboards/<qmk_keyboard>/keymaps/oryx-bench/.
     // /firmware is root-owned. Give QMK a writable tmpfs for build artifacts.
+    let output_names = qmk_output_names(qmk_keyboard);
+    let output_bin = &output_names[0];
     cmd.arg("-v")
         .arg(format!("{}:/work", project.root.display()))
         .arg("-v")
         .arg(format!(
-            "{}:/firmware/keyboards/zsa/voyager/keymaps/oryx-bench:ro",
+            "{}:/firmware/keyboards/{qmk_keyboard}/keymaps/oryx-bench:ro",
             keymap_dir.display()
         ))
         .arg("--tmpfs")
@@ -216,22 +242,22 @@ pub fn build(project: &Project, generated: &Generated, dry_run: bool) -> Result<
         .arg("-w")
         .arg("/work")
         .arg(IMAGE_TAG)
-        .args([
-            "bash",
-            "-c",
-            // QMK's Makefile copies the final .bin to /firmware/ (Make's
-            // CWD), which is root-owned and fails under --user. The .bin
-            // is already in the writable tmpfs at .build/. We let Make
-            // fail on the cp, then check if the .bin was actually produced
-            // and copy it to /work/ (the bind-mounted project root).
+        .arg("bash")
+        .arg("-c")
+        // QMK's Makefile copies the final .bin to /firmware/ (Make's
+        // CWD), which is root-owned and fails under --user. The .bin
+        // is already in the writable tmpfs at .build/. We let Make
+        // fail on the cp, then check if the .bin was actually produced
+        // and copy it to /work/ (the bind-mounted project root).
+        .arg(format!(
             "cd /firmware && \
-             qmk compile -kb zsa/voyager -km oryx-bench; \
+             qmk compile -kb {qmk_keyboard} -km oryx-bench; \
              status=$?; \
-             if [ -f .build/zsa_voyager_oryx-bench.bin ]; then \
-               cp .build/zsa_voyager_oryx-bench.bin /work/zsa_voyager_oryx-bench.bin && exit 0; \
+             if [ -f .build/{output_bin} ]; then \
+               cp .build/{output_bin} /work/{output_bin} && exit 0; \
              fi; \
-             exit $status",
-        ]);
+             exit $status"
+        ));
 
     let output = cmd.output().context("invoking docker")?;
     if !output.status.success() {
@@ -247,13 +273,13 @@ pub fn build(project: &Project, generated: &Generated, dry_run: bool) -> Result<
     // Locate the produced .bin. `qmk compile` writes to the project root;
     // we move it into the build cache and delete the project-root copy
     // so the user's git tree stays clean.
-    let produced = QMK_OUTPUT_NAMES
+    let produced = output_names
         .iter()
         .map(|name| project.root.join(name))
         .find(|p| p.exists())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "docker build claimed success but no .bin file found at any of: {QMK_OUTPUT_NAMES:?}"
+                "docker build claimed success but no .bin file found at any of: {output_names:?}"
             )
         })?;
 

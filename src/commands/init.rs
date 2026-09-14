@@ -26,7 +26,7 @@ pub struct Args {
     #[arg(long)]
     pub blank: bool,
 
-    /// Keyboard geometry (voyager in v0.1).
+    /// Keyboard geometry (voyager or moonlander).
     #[arg(long, default_value = "voyager")]
     pub geometry: String,
 
@@ -101,7 +101,7 @@ fn init_oryx_mode(
         r#"# kb.toml — project configuration for {name}
 
 [layout]
-# Find your hash in the Oryx URL: configure.zsa.io/voyager/layouts/<HASH>/...
+# Find your hash in the Oryx URL: configure.zsa.io/{geometry}/layouts/<HASH>/...
 hash_id  = "{hash}"
 geometry = "{geometry}"
 revision = "latest"

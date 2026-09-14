@@ -1,5 +1,6 @@
 //! Insta snapshot tests for the ASCII renderer against the voyager-dvorak
-//! fixture. Catches column-alignment and thumb-cluster-placement regressions.
+//! and moonlander-default fixtures. Catches column-alignment and
+//! thumb-cluster-placement regressions.
 
 use oryx_bench::render::{self, RenderOptions};
 use oryx_bench::schema::canonical::CanonicalLayout;
@@ -56,4 +57,46 @@ fn snapshot_main_with_position_names() {
         },
     );
     insta::assert_snapshot!("main_position_names", out);
+}
+
+// ── Moonlander ──────────────────────────────────────────────────────────────
+
+fn load_moonlander_fixture() -> CanonicalLayout {
+    let raw = include_str!("../examples/moonlander-default/pulled/revision.json");
+    let oryx_layout: oryx::Layout = serde_json::from_str(raw).unwrap();
+    CanonicalLayout::from_oryx(&oryx_layout).unwrap()
+}
+
+/// The stock Moonlander layout leaves every layer titled "Layer", so
+/// select by position rather than name (the canonical converter
+/// disambiguates the duplicates, but the disambiguated spelling is its
+/// implementation detail, not this test's contract).
+fn render_moonlander_layer(position: usize, opts: RenderOptions) -> String {
+    let layout = load_moonlander_fixture();
+    let geom = geometry::get("moonlander").unwrap();
+    let layer = &layout.layers[position];
+    render::ascii::render_layer(geom, layer, &layout.layers, &opts)
+}
+
+#[test]
+fn snapshot_moonlander_base_layer() {
+    let out = render_moonlander_layer(0, RenderOptions::default());
+    insta::assert_snapshot!("moonlander_base_layer", out);
+}
+
+#[test]
+fn snapshot_moonlander_symbol_layer() {
+    let out = render_moonlander_layer(1, RenderOptions::default());
+    insta::assert_snapshot!("moonlander_symbol_layer", out);
+}
+
+#[test]
+fn snapshot_moonlander_base_with_position_names() {
+    let out = render_moonlander_layer(
+        0,
+        RenderOptions {
+            show_position_names: true,
+        },
+    );
+    insta::assert_snapshot!("moonlander_base_position_names", out);
 }

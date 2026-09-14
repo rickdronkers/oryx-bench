@@ -4,10 +4,11 @@ This document is the canonical design reference. Read it before contributing
 or proposing changes. It is also the document Claude Code reads when working
 on the codebase.
 
-> **Status**: v0.1.0 implemented. Voyager-only, Docker build backend.
+> **Status**: v0.1.0 implemented, plus the Moonlander geometry. Docker
+> build backend.
 > See [`CHANGELOG.md`](CHANGELOG.md) for what's actually shipped.
-> Sections in this doc that describe v0.2+ features (Moonlander/Ergodox
-> geometries, native/nix backends, SVG rendering, `oryx-bench live`,
+> Sections in this doc that describe future features (Ergodox
+> geometry, native/nix backends, SVG rendering, `oryx-bench live`,
 > `oryx-bench tui`) are forward-looking design notes, not current code.
 
 ## What this tool is
@@ -714,13 +715,14 @@ pub struct GridLayout {
 The trait deliberately separates `matrix_key_count` (the LAYOUT macro
 positions) from `encoder_count` (which lives in QMK's separate
 `encoder_map_t` data structure). The Voyager has 52 matrix keys and 0
-encoders. The Moonlander has 72 matrix keys and 2 encoders. Adding
-encoder support to the trait was an explicit design fix from the
-architecture review — it would have leaked otherwise.
+encoders; the Moonlander has 72 matrix keys and 0 encoders. Keeping
+encoder support in the trait was an explicit design fix from the
+architecture review — for a future encoder-bearing board it would have
+leaked otherwise.
 
-Concrete sketch for the Moonlander has been written as a
-review-unblocking exercise (verifies no Voyager-specific assumptions
-slipped into the trait); see `src/schema/geometry/README.md`.
+The Moonlander geometry is implemented in
+`src/schema/geometry/moonlander.rs`, pinned against the stock Oryx
+layout fixture at `examples/moonlander-default/pulled/revision.json`.
 
 ### `src/schema/features.rs` — Tier 1 declarative QMK features
 
@@ -1067,7 +1069,7 @@ Per-project file. Lives at the project root.
 
 [layout]
 hash_id  = "yrbLx"          # required in Oryx mode; absent in local mode
-geometry = "voyager"        # voyager | moonlander | ergodox (v0.1: voyager only)
+geometry = "voyager"        # voyager | moonlander (ergodox: future release)
 revision = "latest"         # or a specific revision hash to pin
 
 [layout.local]              # only present in local mode

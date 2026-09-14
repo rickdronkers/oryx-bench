@@ -250,7 +250,7 @@ Options:
           Use local mode (no Oryx hash)
 
       --geometry <GEOMETRY>
-          Keyboard geometry (voyager in v0.1)
+          Keyboard geometry (voyager or moonlander)
           
           [default: voyager]
 

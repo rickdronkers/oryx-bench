@@ -4,6 +4,7 @@
 //! register it in [`registry`]". See `CONTRIBUTING.md` and `voyager.rs`
 //! for the reference implementation.
 
+pub mod moonlander;
 pub mod voyager;
 
 use once_cell::sync::Lazy;
@@ -17,6 +18,7 @@ use std::collections::HashMap;
 #[serde(rename_all = "snake_case")]
 pub enum GeometryName {
     Voyager,
+    Moonlander,
     /// Forward-compat catch-all for any geometry slug we haven't catalogued.
     /// Preserves the original string so it round-trips through serde.
     #[serde(untagged)]
@@ -27,6 +29,7 @@ impl GeometryName {
     pub fn as_str(&self) -> &str {
         match self {
             GeometryName::Voyager => "voyager",
+            GeometryName::Moonlander => "moonlander",
             GeometryName::Other(s) => s.as_str(),
         }
     }
@@ -35,6 +38,7 @@ impl GeometryName {
     pub fn from_str(s: &str) -> Self {
         match s {
             "voyager" => GeometryName::Voyager,
+            "moonlander" => GeometryName::Moonlander,
             other => GeometryName::Other(other.to_string()),
         }
     }
@@ -84,10 +88,27 @@ mod geometry_name_tests {
     }
 
     #[test]
-    fn from_str_other() {
+    fn from_str_moonlander() {
         assert_eq!(
             GeometryName::from_str("moonlander"),
-            GeometryName::Other("moonlander".into())
+            GeometryName::Moonlander
+        );
+    }
+
+    #[test]
+    fn moonlander_round_trips_through_serde() {
+        let g = GeometryName::Moonlander;
+        let j = serde_json::to_string(&g).unwrap();
+        assert_eq!(j, "\"moonlander\"");
+        let back: GeometryName = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, GeometryName::Moonlander);
+    }
+
+    #[test]
+    fn from_str_other() {
+        assert_eq!(
+            GeometryName::from_str("ergodox"),
+            GeometryName::Other("ergodox".into())
         );
     }
 }
@@ -103,7 +124,7 @@ pub trait Geometry: Send + Sync {
     /// Number of matrix keys (excludes encoders).
     fn matrix_key_count(&self) -> usize;
 
-    /// Number of encoders. Voyager: 0. Moonlander: 2. Ergodox EZ: 1.
+    /// Number of encoders. Voyager and Moonlander: 0.
     fn encoder_count(&self) -> usize;
 
     /// Position name → index in the flat matrix array.
@@ -271,6 +292,8 @@ static REGISTRY: Lazy<HashMap<&'static str, &'static dyn Geometry>> = Lazy::new(
     let mut m = HashMap::new();
     let v: &'static dyn Geometry = &voyager::Voyager;
     m.insert(v.id(), v);
+    let ml: &'static dyn Geometry = &moonlander::Moonlander;
+    m.insert(ml.id(), ml);
     m
 });
 

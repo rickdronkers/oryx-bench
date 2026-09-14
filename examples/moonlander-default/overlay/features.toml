@@ -1,0 +1,26 @@
+# overlay/features.toml — declarative QMK features.
+#
+# The stock Moonlander layout needs no overlay behavior; this file is
+# the untouched scaffold so the example mirrors what `oryx-bench init`
+# produces. See examples/voyager-dvorak/overlay/features.toml for a
+# worked example with achordion, key overrides, and tap-hold tuning.
+
+[config]
+tapping_term_ms = 200
+# permissive_hold = false
+# hold_on_other_key_press = false
+
+# [achordion]
+# enabled = true
+# chord_strategy = "opposite_hands"
+
+# [[key_overrides]]
+# mods  = ["LSHIFT"]
+# key   = "BSPC"
+# sends = "DELETE"
+
+[features]
+key_overrides = false
+combos        = false
+caps_word     = false
+mouse_keys    = false

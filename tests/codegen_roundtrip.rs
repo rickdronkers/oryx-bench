@@ -31,13 +31,20 @@ fn load_fixture() -> CanonicalLayout {
     CanonicalLayout::from_oryx(&oryx_layout).unwrap()
 }
 
-/// Extract the body of every `[<IDENT>] = LAYOUT_voyager(...)` block,
+fn load_moonlander_fixture() -> CanonicalLayout {
+    let raw = include_str!("../examples/moonlander-default/pulled/revision.json");
+    let oryx_layout: oryx::Layout = serde_json::from_str(raw).unwrap();
+    CanonicalLayout::from_oryx(&oryx_layout).unwrap()
+}
+
+/// Extract the body of every `[<IDENT>] = <layout_macro>(...)` block,
 /// returning `(layer_ident, args)` pairs where `args` is the comma-split
 /// list of QMK keycode tokens in argument order.
-fn parse_layout_blocks(keymap_c: &str) -> Vec<(String, Vec<String>)> {
+fn parse_layout_blocks(keymap_c: &str, layout_macro: &str) -> Vec<(String, Vec<String>)> {
+    let needle = format!("] = {layout_macro}(");
     let mut out = Vec::new();
     let mut rest = keymap_c;
-    while let Some(start) = rest.find("] = LAYOUT_voyager(") {
+    while let Some(start) = rest.find(needle.as_str()) {
         // Find the layer ident: scan backwards from `start` for `[`.
         let head = &rest[..start];
         let bracket = head.rfind('[').expect("matching `[` for `]`");
@@ -45,7 +52,7 @@ fn parse_layout_blocks(keymap_c: &str) -> Vec<(String, Vec<String>)> {
 
         // Find the matching closing `)`. The body is balanced parens
         // (LT(L, X), LCTL_T(KC_A), …) so track depth.
-        let body_start = start + "] = LAYOUT_voyager(".len();
+        let body_start = start + needle.len();
         let mut depth = 1usize;
         let mut i = body_start;
         let bytes = rest.as_bytes();
@@ -62,7 +69,7 @@ fn parse_layout_blocks(keymap_c: &str) -> Vec<(String, Vec<String>)> {
             }
             i += 1;
         }
-        assert!(depth == 0, "unbalanced LAYOUT_voyager(...) block");
+        assert!(depth == 0, "unbalanced {layout_macro}(...) block");
         let body = &rest[body_start..i];
 
         // Split top-level commas in the body.
@@ -106,17 +113,26 @@ fn split_top_level_args(body: &str) -> Vec<String> {
 
 #[test]
 fn structural_round_trip_against_fixture() {
-    let canonical = load_fixture();
-    let geom = geometry::get("voyager").unwrap();
+    structural_round_trip(load_fixture(), "voyager");
+}
+
+#[test]
+fn structural_round_trip_against_moonlander_fixture() {
+    structural_round_trip(load_moonlander_fixture(), "moonlander");
+}
+
+fn structural_round_trip(canonical: CanonicalLayout, geometry_slug: &str) {
+    let geom = geometry::get(geometry_slug).unwrap();
     let features = FeaturesToml::default();
     let generated = generate::generate_all(&canonical, &features, geom, None).unwrap();
 
     // Pull the LAYOUT blocks out of the generated source.
-    let blocks = parse_layout_blocks(&generated.keymap_c);
+    let blocks = parse_layout_blocks(&generated.keymap_c, geom.layout_macro());
     assert_eq!(
         blocks.len(),
         canonical.layers.len(),
-        "expected one LAYOUT_voyager block per canonical layer"
+        "expected one {} block per canonical layer",
+        geom.layout_macro()
     );
 
     let qmk_order = geom.qmk_arg_order();
@@ -241,6 +257,15 @@ fn sanitize(name: &str) -> String {
 
 #[test]
 fn keymap_c_is_parseable_by_qmk_when_available() {
+    qmk_c2json_check(load_fixture(), "voyager");
+}
+
+#[test]
+fn moonlander_keymap_c_is_parseable_by_qmk_when_available() {
+    qmk_c2json_check(load_moonlander_fixture(), "moonlander");
+}
+
+fn qmk_c2json_check(canonical: CanonicalLayout, geometry_slug: &str) {
     if which::which("qmk").is_err() {
         eprintln!("skip: `qmk` not on PATH (install qmk to enable the c2json check)");
         return;
@@ -259,8 +284,7 @@ fn keymap_c_is_parseable_by_qmk_when_available() {
         }
     }
 
-    let canonical = load_fixture();
-    let geom = geometry::get("voyager").unwrap();
+    let geom = geometry::get(geometry_slug).unwrap();
     let features = FeaturesToml::default();
     let generated = generate::generate_all(&canonical, &features, geom, None).unwrap();
 
@@ -272,7 +296,7 @@ fn keymap_c_is_parseable_by_qmk_when_available() {
             "c2json",
             "--no-cpp",
             "-kb",
-            "zsa/voyager",
+            geom.qmk_keyboard(),
             "-km",
             "oryx-bench",
         ])

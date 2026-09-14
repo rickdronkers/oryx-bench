@@ -4,10 +4,11 @@
 > at all), modern declarative config + Zig for advanced features, one-command
 > deterministic builds, designed to be driven by humans **and** by Claude Code.
 
-> **Status: v0.1.0.** Voyager support, Docker build backend, flashing
-> delegated to ZSA's [`zapp`](https://github.com/zsa/zapp), full lint
-> suite. Moonlander/Ergodox geometries and native+nix build backends
-> are tracked for a future release. The full design spec is in
+> **Status: v0.1.0 + Moonlander.** Voyager and Moonlander support,
+> Docker build backend, flashing delegated to ZSA's
+> [`zapp`](https://github.com/zsa/zapp), full lint suite. Ergodox
+> geometry and native+nix build backends are tracked for a future
+> release. The full design spec is in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## What it does
@@ -259,8 +260,8 @@ dry-run plan.
 
 ## Roadmap
 
-**v0.1 (current release)** — Voyager-only, Docker build backend, full
-authoring + lint + flash surface:
+**Current** — Voyager and Moonlander geometries, Docker build backend,
+full authoring + lint + flash surface:
 
 - `setup`, `init` (both modes), `pull`, `show`, `explain`, `find`, `lint`,
   `status`, `skill install/remove` (read-side surface)
@@ -268,11 +269,14 @@ authoring + lint + flash surface:
 - `diff` (semantic vs git ref), `upgrade-check` (re-lint after tool upgrade)
 - 21 lint rules including the LT-on-high-freq footgun, achordion + key-override
   + combo + macro codegen, structural codegen round-trip test
+- Voyager and Moonlander geometries (`--geometry voyager|moonlander`),
+  each pinned by a committed Oryx fixture + codegen round-trip and
+  render snapshot tests
 
 **Future releases**
 
 - Native and Nix build backends
-- Moonlander and Ergodox geometries
+- Ergodox geometry
 - `oryx-bench watch` (live layer-state indicator over raw HID; no Keymapp daemon required. `live` alias)
 - `oryx-bench tui` (in-terminal layout editor for local mode)
 - User-defined lint rules

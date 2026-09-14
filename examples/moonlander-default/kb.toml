@@ -1,0 +1,20 @@
+# kb.toml — project configuration for moonlander-default
+#
+# This example tracks the stock "Moonlander Default Layout" that Oryx
+# serves at configure.zsa.io/moonlander/layouts/default/latest/0. The
+# committed pulled/revision.json is the fixture the geometry, codegen
+# round-trip, and render snapshot tests pin the Moonlander support
+# against.
+
+[layout]
+# Find your hash in the Oryx URL: configure.zsa.io/moonlander/layouts/<HASH>/...
+hash_id  = "default"
+geometry = "moonlander"
+revision = "latest"
+
+[build]
+backend = "docker"
+
+[lint]
+ignore = []
+strict = false
