@@ -109,6 +109,10 @@ pub struct Action {
     pub code: String,
     #[serde(default)]
     pub layer: Option<u8>,
+    /// Hex color (`"#rrggbb"`) carried by Oryx's color-swatch keys
+    /// (`code = "RGB"`). `None` for every other action.
+    #[serde(default)]
+    pub color: Option<String>,
     #[serde(default)]
     pub modifier: Option<String>,
     /// Oryx returns `modifiers` either as `null`, as an array of mod names

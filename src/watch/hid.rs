@@ -80,7 +80,15 @@ pub const STOP: u8 = 0xFE;
 /// Highest "Oryx WebHID" protocol version this client speaks. Drift
 /// below this is best-effort; drift above hard-fails — a newer firmware
 /// dialect could redefine event IDs and we'd misroute writes silently.
-pub const PROTOCOL_VERSION: u8 = 0x04;
+///
+/// Version log (audited against `zsa/qmk_modules` `oryx/oryx.h` before
+/// each ceiling raise):
+/// - 0x05 (2026-06, "per device automouse"): purely additive —
+///   appends `ORYX_SET_AUTOMOUSE`/`ORYX_GET_AUTOMOUSE` commands and
+///   `ORYX_EVT_AUTOMOUSE`; every command/event id this client uses is
+///   unchanged. We never send the automouse commands, so the new event
+///   can only arrive unsolicited and lands in `Event::Unknown`.
+pub const PROTOCOL_VERSION: u8 = 0x05;
 
 /// Command / event identifiers. The `Cmd` constants are host→device
 /// request bytes; the `Evt` constants are device→host response bytes.
@@ -1157,7 +1165,7 @@ mod tests {
     #[test]
     fn handshake_rejects_unknown_future_protocol() {
         let mut t = MockTransport::new();
-        t.queue_read(single(wire::GET_PROTOCOL_VERSION, &[0x05]));
+        t.queue_read(single(wire::GET_PROTOCOL_VERSION, &[PROTOCOL_VERSION + 1]));
 
         let err = match Client::handshake(Box::new(t), None, Duration::from_millis(100)) {
             Ok(_) => panic!("must reject unknown version"),
@@ -1166,13 +1174,13 @@ mod tests {
         let typed = err
             .downcast_ref::<HidOpenError>()
             .expect("typed HidOpenError");
-        assert!(matches!(
-            typed,
-            HidOpenError::UnknownProtocolVersion {
-                got: 0x05,
-                ours: 0x04
+        match typed {
+            HidOpenError::UnknownProtocolVersion { got, ours } => {
+                assert_eq!(*got, PROTOCOL_VERSION + 1);
+                assert_eq!(*ours, PROTOCOL_VERSION);
             }
-        ));
+            other => panic!("wrong error variant: {other:?}"),
+        }
     }
 
     #[test]

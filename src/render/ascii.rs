@@ -415,6 +415,13 @@ fn friendly_keycode(kc: &Keycode) -> String {
         KcBootloader => "BOOT",
         KcReset => "RESET",
 
+        // ZSA-specific
+        KcToggleLayerColor => "LyrCol",
+        KcLedLevel => "LedLvl",
+        KcRgbSld => "RGBSLD",
+        // Color-swatch key — show the color it sets, not the HSV_ ident.
+        RgbColor { h, s, v } => return format!("HSV({h},{s},{v})"),
+
         Other(s) => {
             return s
                 .strip_prefix("KC_")

@@ -28,7 +28,7 @@ use crate::schema::keycode::Keycode;
 use crate::schema::layout::parse_action;
 
 use super::keymap::emit_action;
-use super::{CustomKeycodeTable, LayerTable, TapDanceTable};
+use super::{CustomKeycodeTable, LayerTable, RgbKeycodeTable, TapDanceTable};
 
 /// Default achordion timeout in milliseconds when no per-key override
 /// is set. Matches the upstream achordion library default.
@@ -54,6 +54,7 @@ fn translate_binding(s: &str, layers: &LayerTable) -> Result<String> {
 /// units agree on symbol IDs.
 pub fn emit_features_h(
     custom_keycodes: &CustomKeycodeTable,
+    rgb_keycodes: &RgbKeycodeTable,
     tap_dances: &TapDanceTable,
     layers: &LayerTable,
 ) -> String {
@@ -76,16 +77,27 @@ pub fn emit_features_h(
         out.push_str("};\n\n");
     }
 
-    if !custom_keycodes.is_empty() {
+    if !custom_keycodes.is_empty() || !rgb_keycodes.is_empty() {
         out.push_str("enum custom_keycodes {\n");
         let mut first = true;
-        for entry in custom_keycodes.values() {
+        let mut push_ident = |out: &mut String, ident: &str| {
             if first {
-                let _ = writeln!(out, "    {} = SAFE_RANGE,", entry.ident);
+                let _ = writeln!(out, "    {ident} = SAFE_RANGE,");
                 first = false;
             } else {
-                let _ = writeln!(out, "    {},", entry.ident);
+                let _ = writeln!(out, "    {ident},");
             }
+        };
+        for entry in custom_keycodes.values() {
+            push_ident(&mut out, &entry.ident);
+        }
+        // Oryx-generated RGB keycodes (color swatches + RGB_SLD) —
+        // same idents `emit_action` writes into keymap.c.
+        if rgb_keycodes.uses_rgb_sld {
+            push_ident(&mut out, "RGB_SLD");
+        }
+        for (h, s, v) in &rgb_keycodes.colors {
+            push_ident(&mut out, &format!("HSV_{h}_{s}_{v}"));
         }
         out.push_str("};\n\n");
     }
@@ -116,6 +128,7 @@ pub fn emit_features_c(
     features: &FeaturesToml,
     layers: &LayerTable,
     custom_keycodes: &CustomKeycodeTable,
+    rgb_keycodes: &RgbKeycodeTable,
     _layout: &CanonicalLayout,
     tap_dances: &TapDanceTable,
 ) -> Result<String> {
@@ -169,7 +182,11 @@ pub fn emit_features_c(
         }
     }
 
-    out.push_str(&emit_process_record_user(custom_keycodes, features));
+    out.push_str(&emit_process_record_user(
+        custom_keycodes,
+        rgb_keycodes,
+        features,
+    ));
     out.push('\n');
 
     Ok(out)
@@ -292,6 +309,7 @@ fn emit_tapping_term_per_key(features: &FeaturesToml, layers: &LayerTable) -> Re
 
 fn emit_process_record_user(
     custom_keycodes: &CustomKeycodeTable,
+    rgb_keycodes: &RgbKeycodeTable,
     _features: &FeaturesToml,
 ) -> String {
     let mut out = String::new();
@@ -306,6 +324,19 @@ fn emit_process_record_user(
             out,
             "            case {}: SEND_STRING(\"{escaped}\"); return false;",
             entry.ident
+        );
+    }
+    // Oryx-generated RGB keycodes. `rgblight_*` is the spelling ZSA's
+    // QMK fork uses in its own Oryx exports; on RGB-matrix boards
+    // (Moonlander, Voyager) the fork's rgb_matrix.h #defines them to
+    // the rgb_matrix_* equivalents.
+    if rgb_keycodes.uses_rgb_sld {
+        out.push_str("            case RGB_SLD: rgblight_mode(1); return false;\n");
+    }
+    for (h, s, v) in &rgb_keycodes.colors {
+        let _ = writeln!(
+            out,
+            "            case HSV_{h}_{s}_{v}: rgblight_mode(1); rgblight_sethsv({h}, {s}, {v}); return false;"
         );
     }
     out.push_str("            default: break;\n");
@@ -665,7 +696,7 @@ mod tests {
             },
         );
         let features = FeaturesToml::default();
-        let out = emit_process_record_user(&custom, &features);
+        let out = emit_process_record_user(&custom, &RgbKeycodeTable::default(), &features);
         assert!(out.contains("CK_EMAIL"));
         assert!(out.contains("SEND_STRING"));
         assert!(out.contains("you@example.com"));
@@ -682,7 +713,11 @@ mod tests {
                 body: "git status\n".into(),
             },
         );
-        let out = emit_process_record_user(&custom, &FeaturesToml::default());
+        let out = emit_process_record_user(
+            &custom,
+            &RgbKeycodeTable::default(),
+            &FeaturesToml::default(),
+        );
         assert!(out.contains("git status\\n"));
     }
 
@@ -698,8 +733,15 @@ mod tests {
             combos: Vec::new(),
             config: Default::default(),
         };
-        let out =
-            emit_features_c(&features, &layers, &custom, &layout, &TapDanceTable::new()).unwrap();
+        let out = emit_features_c(
+            &features,
+            &layers,
+            &custom,
+            &RgbKeycodeTable::default(),
+            &layout,
+            &TapDanceTable::new(),
+        )
+        .unwrap();
         assert!(out.contains("process_record_user"));
         assert!(out.contains("process_record_user_overlay"));
     }
@@ -714,7 +756,12 @@ mod tests {
                 body: "you@example.com".into(),
             },
         );
-        let h = emit_features_h(&custom, &TapDanceTable::new(), &LayerTable::new());
+        let h = emit_features_h(
+            &custom,
+            &RgbKeycodeTable::default(),
+            &TapDanceTable::new(),
+            &LayerTable::new(),
+        );
         assert!(h.contains("#pragma once"));
         assert!(h.contains("enum custom_keycodes"));
         assert!(h.contains("CK_EMAIL = SAFE_RANGE"));
@@ -724,7 +771,12 @@ mod tests {
     #[test]
     fn emit_features_h_omits_enum_when_no_macros() {
         let custom = CustomKeycodeTable::new();
-        let h = emit_features_h(&custom, &TapDanceTable::new(), &LayerTable::new());
+        let h = emit_features_h(
+            &custom,
+            &RgbKeycodeTable::default(),
+            &TapDanceTable::new(),
+            &LayerTable::new(),
+        );
         assert!(h.contains("#pragma once"));
         assert!(!h.contains("enum custom_keycodes"));
         // The forward decl is unconditional so Tier 2 hooks always link.
@@ -908,7 +960,12 @@ mod tests {
                 layer: LayerRef::Name("Gaming".into()),
             },
         }];
-        let h = emit_features_h(&CustomKeycodeTable::new(), &tap_dances, &LayerTable::new());
+        let h = emit_features_h(
+            &CustomKeycodeTable::new(),
+            &RgbKeycodeTable::default(),
+            &tap_dances,
+            &LayerTable::new(),
+        );
         assert!(h.contains("enum tap_dance_ids"));
         assert!(h.contains("TD_0"));
         assert!(h.contains("extern tap_dance_action_t tap_dance_actions[]"));
@@ -918,10 +975,58 @@ mod tests {
     fn emit_features_h_omits_td_enum_when_no_tap_dances() {
         let h = emit_features_h(
             &CustomKeycodeTable::new(),
+            &RgbKeycodeTable::default(),
             &TapDanceTable::new(),
             &LayerTable::new(),
         );
         assert!(!h.contains("tap_dance_ids"));
         assert!(!h.contains("tap_dance_actions"));
+    }
+
+    #[test]
+    fn rgb_keycodes_emit_enum_and_handlers() {
+        let rgb = RgbKeycodeTable {
+            colors: vec![(0, 255, 255), (74, 255, 206)],
+            uses_rgb_sld: true,
+        };
+        let h = emit_features_h(
+            &CustomKeycodeTable::new(),
+            &rgb,
+            &TapDanceTable::new(),
+            &LayerTable::new(),
+        );
+        // With no macros, the first RGB entry anchors SAFE_RANGE.
+        assert!(h.contains("enum custom_keycodes"));
+        assert!(h.contains("RGB_SLD = SAFE_RANGE,"));
+        assert!(h.contains("HSV_0_255_255,"));
+        assert!(h.contains("HSV_74_255_206,"));
+
+        let out =
+            emit_process_record_user(&CustomKeycodeTable::new(), &rgb, &FeaturesToml::default());
+        assert!(out.contains("case RGB_SLD: rgblight_mode(1); return false;"));
+        assert!(out.contains(
+            "case HSV_74_255_206: rgblight_mode(1); rgblight_sethsv(74, 255, 206); return false;"
+        ));
+    }
+
+    #[test]
+    fn macros_anchor_safe_range_before_rgb_keycodes() {
+        let mut custom = CustomKeycodeTable::new();
+        custom.insert(
+            "USER01".into(),
+            super::super::CustomKeycodeEntry {
+                ident: "CK_EMAIL".into(),
+                body: "you@example.com".into(),
+            },
+        );
+        let rgb = RgbKeycodeTable {
+            colors: vec![(0, 255, 255)],
+            uses_rgb_sld: false,
+        };
+        let h = emit_features_h(&custom, &rgb, &TapDanceTable::new(), &LayerTable::new());
+        assert!(h.contains("CK_EMAIL = SAFE_RANGE,"));
+        // RGB entries follow without a second SAFE_RANGE anchor.
+        assert!(h.contains("HSV_0_255_255,"));
+        assert_eq!(h.matches("SAFE_RANGE").count(), 1);
     }
 }

@@ -796,6 +796,49 @@ fn oryx_action_to_canonical(a: &oryx::Action) -> CanonicalAction {
     }
 }
 
+/// Convert an Oryx hex color (`"#rrggbb"`, case-insensitive) to QMK's
+/// 0..=255-scaled HSV triple — the encoding Oryx itself uses when it
+/// exports a color-swatch key as an `HSV_<h>_<s>_<v>` custom keycode
+/// (hue 0..=255 maps the full 0..360° circle).
+///
+/// Returns `None` for anything that isn't exactly `#` + 6 hex digits.
+fn hex_color_to_qmk_hsv(hex: &str) -> Option<(u8, u8, u8)> {
+    let digits = hex.strip_prefix('#')?;
+    if digits.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&digits[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&digits[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&digits[4..6], 16).ok()?;
+
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = (max - min) as f64;
+
+    let v = max;
+    let s = if max == 0 {
+        0
+    } else {
+        (delta * 255.0 / max as f64).round() as u8
+    };
+    let h = if delta == 0.0 {
+        0u8
+    } else {
+        // Hue in degrees (0..360), then scaled onto QMK's 0..=255 wheel.
+        let (rf, gf, bf) = (r as f64, g as f64, b as f64);
+        let deg = if max == r {
+            60.0 * (((gf - bf) / delta) % 6.0)
+        } else if max == g {
+            60.0 * ((bf - rf) / delta + 2.0)
+        } else {
+            60.0 * ((rf - gf) / delta + 4.0)
+        };
+        let deg = if deg < 0.0 { deg + 360.0 } else { deg };
+        ((deg * 256.0 / 360.0).round() as u16 % 256) as u8
+    };
+    Some((h, s, v))
+}
+
 /// Parse Oryx's `Action.modifier` (a single string) and `Action.modifiers`
 /// (an object map of leftCtrl/leftShift/etc → bool) into a sorted,
 /// deduplicated list of [`Modifier`]s. Returns an empty vec when
@@ -876,6 +919,17 @@ fn base_action_from_oryx(a: &oryx::Action) -> CanonicalAction {
     match a.code.as_str() {
         "KC_NO" => CanonicalAction::None,
         "KC_TRANSPARENT" | "KC_TRNS" => CanonicalAction::Transparent,
+        // Oryx color-swatch key: `code = "RGB"` plus a hex `color`.
+        // Oryx exports these as generated `HSV_<h>_<s>_<v>` custom
+        // keycodes (QMK 0..=255 HSV scale); we convert the hex here so
+        // the canonical layout carries the same representation. A
+        // missing or malformed color falls through to `Other("RGB")`
+        // so the unknown-keycode lint surfaces it instead of codegen
+        // silently emitting a colorless key.
+        "RGB" => match a.color.as_deref().and_then(hex_color_to_qmk_hsv) {
+            Some((h, s, v)) => CanonicalAction::Keycode(Keycode::RgbColor { h, s, v }),
+            None => CanonicalAction::Keycode(Keycode::Other("RGB".to_string())),
+        },
         "MO" => CanonicalAction::Mo {
             layer: LayerRef::Index(a.layer.unwrap_or(0)),
         },
@@ -996,6 +1050,7 @@ mod tests {
             tap: Some(oryx::Action {
                 code: "KC_A".into(),
                 layer: None,
+                color: None,
                 modifier: None,
                 modifiers: None,
                 macro_: None,
@@ -1004,6 +1059,7 @@ mod tests {
             hold: Some(oryx::Action {
                 code: "KC_LCTL".into(),
                 layer: None,
+                color: None,
                 modifier: None,
                 modifiers: None,
                 macro_: None,
@@ -1035,6 +1091,7 @@ mod tests {
         let action = oryx::Action {
             code: "USER03".into(),
             layer: None,
+            color: None,
             modifier: None,
             modifiers: None,
             macro_: None,
@@ -1053,6 +1110,7 @@ mod tests {
         let action = oryx::Action {
             code: "USER31".into(),
             layer: None,
+            color: None,
             modifier: None,
             modifiers: None,
             macro_: None,
@@ -1073,6 +1131,7 @@ mod tests {
         let action = oryx::Action {
             code: "USER42".into(),
             layer: None,
+            color: None,
             modifier: None,
             modifiers: None,
             macro_: None,
@@ -1215,5 +1274,94 @@ mod tests {
         assert_eq!(table[1].1, "Layer_2");
         assert_eq!(table[2].1, "Layer_3");
         assert_eq!(table[3].1, "Layer_1"); // unchanged
+    }
+
+    #[test]
+    fn hex_color_to_qmk_hsv_known_values() {
+        // Pure red: hue 0.
+        assert_eq!(hex_color_to_qmk_hsv("#FF0000"), Some((0, 255, 255)));
+        // Pure green: 120° → 85 on QMK's 0..=255 wheel (matches QMK's
+        // HSV_GREEN constant).
+        assert_eq!(hex_color_to_qmk_hsv("#00FF00"), Some((85, 255, 255)));
+        // Greyscale: no hue, no saturation.
+        assert_eq!(hex_color_to_qmk_hsv("#FFFFFF"), Some((0, 0, 255)));
+        assert_eq!(hex_color_to_qmk_hsv("#000000"), Some((0, 0, 0)));
+        // Case-insensitive.
+        assert_eq!(
+            hex_color_to_qmk_hsv("#ff0000"),
+            hex_color_to_qmk_hsv("#FF0000")
+        );
+    }
+
+    #[test]
+    fn hex_color_to_qmk_hsv_rejects_malformed() {
+        assert_eq!(hex_color_to_qmk_hsv("FF0000"), None); // no '#'
+        assert_eq!(hex_color_to_qmk_hsv("#FF000"), None); // 5 digits
+        assert_eq!(hex_color_to_qmk_hsv("#FF00000"), None); // 7 digits
+        assert_eq!(hex_color_to_qmk_hsv("#GG0000"), None); // not hex
+        assert_eq!(hex_color_to_qmk_hsv(""), None);
+    }
+
+    #[test]
+    fn oryx_rgb_color_key_becomes_rgb_color_keycode() {
+        use std::collections::HashMap;
+        let action = oryx::Action {
+            code: "RGB".into(),
+            layer: None,
+            color: Some("#FF0000".into()),
+            modifier: None,
+            modifiers: None,
+            macro_: None,
+            extra: HashMap::new(),
+        };
+        assert_eq!(
+            oryx_action_to_canonical(&action),
+            CanonicalAction::Keycode(Keycode::RgbColor {
+                h: 0,
+                s: 255,
+                v: 255
+            })
+        );
+    }
+
+    #[test]
+    fn oryx_rgb_key_without_color_falls_to_other() {
+        use std::collections::HashMap;
+        let action = oryx::Action {
+            code: "RGB".into(),
+            layer: None,
+            color: None,
+            modifier: None,
+            modifiers: None,
+            macro_: None,
+            extra: HashMap::new(),
+        };
+        // Surfaces via the unknown-keycode lint instead of silently
+        // dropping the key.
+        assert_eq!(
+            oryx_action_to_canonical(&action),
+            CanonicalAction::Keycode(Keycode::Other("RGB".into()))
+        );
+    }
+
+    #[test]
+    fn oryx_all_t_hold_becomes_hyper_mod_tap() {
+        use std::collections::HashMap;
+        let action = oryx::Action {
+            code: "ALL_T".into(),
+            layer: None,
+            color: None,
+            modifier: None,
+            modifiers: None,
+            macro_: None,
+            extra: HashMap::new(),
+        };
+        assert_eq!(
+            oryx_action_to_canonical(&action),
+            CanonicalAction::ModTap {
+                mod_: Modifier::Hypr,
+                tap: Box::new(CanonicalAction::None),
+            }
+        );
     }
 }

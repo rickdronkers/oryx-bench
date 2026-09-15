@@ -56,6 +56,7 @@ pub fn generate_all(
 ) -> Result<Generated> {
     let layer_table = build_layer_table(layout);
     let custom_keycodes = build_custom_keycode_table(features);
+    let rgb_keycodes = build_rgb_keycode_table(layout);
     let tap_dances = build_tap_dance_table(layout)?;
 
     // Guard: if the layout uses double_tap keys but the user explicitly
@@ -86,10 +87,12 @@ pub fn generate_all(
         features,
         &layer_table,
         &custom_keycodes,
+        &rgb_keycodes,
         layout,
         &tap_dances,
     )?;
-    let features_h = features::emit_features_h(&custom_keycodes, &tap_dances, &layer_table);
+    let features_h =
+        features::emit_features_h(&custom_keycodes, &rgb_keycodes, &tap_dances, &layer_table);
     let config_h = config_h::emit_config_h(features)?;
     let rules_mk = rules_mk::emit_rules_mk(features, overlay_dir, !tap_dances.is_empty())?;
 
@@ -160,6 +163,67 @@ pub struct CustomKeycodeEntry {
     pub ident: String,
     /// "you@example.com" — the SEND_STRING body.
     pub body: String,
+}
+
+/// Oryx-generated RGB custom keycodes used by the layout: the distinct
+/// `HSV_<h>_<s>_<v>` color-swatch keys, plus whether `RGB_SLD` appears.
+/// Both are keycodes Oryx invents at export time (not QMK symbols), so
+/// the codegen layer must declare them in `enum custom_keycodes` and
+/// give each a `process_record_user` case — this table centralizes the
+/// scan so `_features.h` and `_features.c` agree on the set.
+#[derive(Debug, Clone, Default)]
+pub struct RgbKeycodeTable {
+    /// Distinct colors, sorted, in QMK 0..=255 HSV scale.
+    pub colors: Vec<(u8, u8, u8)>,
+    pub uses_rgb_sld: bool,
+}
+
+impl RgbKeycodeTable {
+    pub fn is_empty(&self) -> bool {
+        self.colors.is_empty() && !self.uses_rgb_sld
+    }
+}
+
+fn build_rgb_keycode_table(layout: &CanonicalLayout) -> RgbKeycodeTable {
+    use crate::schema::canonical::CanonicalAction;
+    use crate::schema::keycode::Keycode;
+    use std::collections::BTreeSet;
+
+    let mut colors: BTreeSet<(u8, u8, u8)> = BTreeSet::new();
+    let mut uses_rgb_sld = false;
+
+    fn walk(
+        action: &CanonicalAction,
+        colors: &mut BTreeSet<(u8, u8, u8)>,
+        uses_rgb_sld: &mut bool,
+    ) {
+        match action {
+            CanonicalAction::Keycode(Keycode::RgbColor { h, s, v }) => {
+                colors.insert((*h, *s, *v));
+            }
+            CanonicalAction::Keycode(Keycode::KcRgbSld) => *uses_rgb_sld = true,
+            CanonicalAction::Lt { tap, .. } => walk(tap, colors, uses_rgb_sld),
+            CanonicalAction::ModTap { tap, .. } => walk(tap, colors, uses_rgb_sld),
+            CanonicalAction::Modified { base, .. } => walk(base, colors, uses_rgb_sld),
+            _ => {}
+        }
+    }
+
+    for layer in &layout.layers {
+        for key in &layer.keys {
+            for action in [&key.tap, &key.hold, &key.double_tap, &key.tap_hold]
+                .into_iter()
+                .flatten()
+            {
+                walk(action, &mut colors, &mut uses_rgb_sld);
+            }
+        }
+    }
+
+    RgbKeycodeTable {
+        colors: colors.into_iter().collect(),
+        uses_rgb_sld,
+    }
 }
 
 fn build_custom_keycode_table(features: &FeaturesToml) -> CustomKeycodeTable {

@@ -235,6 +235,31 @@ pub enum Keycode {
     /// `RESET` / `KC_RESET` — soft reset.
     KcReset,
 
+    // ---- ZSA-specific -------------------------------------------------------
+    /// `TOGGLE_LAYER_COLOR` — toggle the per-layer LED colors. Defined
+    /// at keyboard level (`QK_KB_0`) in every ZSA board's header, so it
+    /// is a valid identifier in any keymap without extra codegen.
+    KcToggleLayerColor,
+    /// `LED_LEVEL` — cycle the status LED brightness. Keyboard-level,
+    /// same as `TOGGLE_LAYER_COLOR`.
+    KcLedLevel,
+    /// `RGB_SLD` — Oryx's "stop RGB animation, hold current color" key.
+    /// Not a QMK/board keycode: Oryx exports it as a *generated* custom
+    /// keycode. Our codegen mirrors that — an `enum custom_keycodes`
+    /// entry plus a `process_record_user` case calling
+    /// `rgblight_mode(1)`.
+    KcRgbSld,
+    /// An Oryx color-swatch key (`code = "RGB"` with a hex `color`).
+    /// Oryx exports these as generated `HSV_<h>_<s>_<v>` custom
+    /// keycodes whose handler sets the whole matrix to that color via
+    /// `rgblight_mode(1); rgblight_sethsv(h, s, v)`; our codegen emits
+    /// the same. Components are in QMK's 0..=255 HSV scale.
+    RgbColor {
+        h: u8,
+        s: u8,
+        v: u8,
+    },
+
     // ---- Forward-compat catch-all ------------------------------------------
     /// Any keycode string we don't (yet) have a variant for. The codegen layer
     /// emits the literal string verbatim into `keymap.c`, so unknown keycodes
@@ -434,6 +459,17 @@ impl Keycode {
 
             KcBootloader => "QK_BOOT",
             KcReset => "RESET",
+
+            // ZSA keyboard-level keycodes (defined by the board's
+            // <keyboard>.h in the ZSA QMK fork, valid in any keymap).
+            KcToggleLayerColor => "TOGGLE_LAYER_COLOR",
+            KcLedLevel => "LED_LEVEL",
+
+            // Oryx-generated custom keycodes: the codegen layer emits a
+            // matching `enum custom_keycodes` entry + process_record
+            // handler for each (see `generate::build_rgb_keycode_table`).
+            KcRgbSld => "RGB_SLD",
+            RgbColor { h, s, v } => return Cow::Owned(format!("HSV_{h}_{s}_{v}")),
 
             Other(s) => return Cow::Owned(s.clone()),
         };
@@ -648,7 +684,18 @@ impl Keycode {
             "RGB_VAD" | "RGB_VAL_DECREASE" => KcRgbValDown,
             "QK_BOOT" | "KC_BOOTLOADER" | "BOOTLOADER" => KcBootloader,
             "RESET" | "KC_RESET" => KcReset,
-            _ => Keycode::Other(s.to_string()),
+            "TOGGLE_LAYER_COLOR" => KcToggleLayerColor,
+            "LED_LEVEL" => KcLedLevel,
+            "RGB_SLD" => KcRgbSld,
+            _ => {
+                // `HSV_<h>_<s>_<v>` — the serialized form of an Oryx
+                // color-swatch key ([`Keycode::RgbColor`]); parse it
+                // back so canonical layouts round-trip through serde.
+                if let Some(kc) = parse_hsv_keycode(&upper) {
+                    return kc;
+                }
+                Keycode::Other(s.to_string())
+            }
         }
     }
 
@@ -729,6 +776,29 @@ impl Keycode {
     pub fn is_known(&self) -> bool {
         !matches!(self, Keycode::Other(_))
     }
+}
+
+/// Parse `HSV_<h>_<s>_<v>` (each component `0..=255`, no leading `+`/
+/// whitespace) into [`Keycode::RgbColor`]. Returns `None` for anything
+/// that doesn't match exactly — such strings fall through to
+/// [`Keycode::Other`] like any unknown keycode.
+fn parse_hsv_keycode(upper: &str) -> Option<Keycode> {
+    let rest = upper.strip_prefix("HSV_")?;
+    let mut parts = rest.split('_');
+    let mut component = || -> Option<u8> {
+        let p = parts.next()?;
+        if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        p.parse::<u8>().ok()
+    };
+    let h = component()?;
+    let s = component()?;
+    let v = component()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(Keycode::RgbColor { h, s, v })
 }
 
 impl fmt::Display for Keycode {
@@ -827,7 +897,9 @@ impl Modifier {
             "RSFT" | "RSHIFT" | "RIGHT_SHIFT" => Modifier::Rsft,
             "RALT" | "RIGHT_ALT" => Modifier::Ralt,
             "RGUI" | "RIGHT_GUI" => Modifier::Rgui,
-            "HYPR" | "HYPER" => Modifier::Hypr,
+            // "ALL" is Oryx's spelling: its `ALL_T` code is QMK's
+            // `ALL_T(kc)` — the Hyper (Ctrl+Shift+Alt+Gui) mod-tap.
+            "HYPR" | "HYPER" | "ALL" => Modifier::Hypr,
             "MEH" => Modifier::Meh,
             _ => return None,
         })
@@ -1230,5 +1302,45 @@ mod tests {
         let kc: Keycode = serde_json::from_str(json).unwrap();
         assert_eq!(kc, Keycode::Other("KC_FROBNICATE".into()));
         assert_eq!(serde_json::to_string(&kc).unwrap(), json);
+    }
+
+    #[test]
+    fn zsa_keycodes_parse_and_are_known() {
+        assert_eq!(
+            Keycode::from_str("TOGGLE_LAYER_COLOR"),
+            Keycode::KcToggleLayerColor
+        );
+        assert_eq!(Keycode::from_str("LED_LEVEL"), Keycode::KcLedLevel);
+        assert_eq!(Keycode::from_str("RGB_SLD"), Keycode::KcRgbSld);
+        assert!(Keycode::KcToggleLayerColor.is_known());
+        assert!(Keycode::KcRgbSld.is_known());
+    }
+
+    #[test]
+    fn hsv_keycode_round_trips_through_canonical_name() {
+        let kc = Keycode::RgbColor {
+            h: 74,
+            s: 255,
+            v: 206,
+        };
+        assert_eq!(kc.canonical_name(), "HSV_74_255_206");
+        assert_eq!(Keycode::from_str("HSV_74_255_206"), kc);
+        assert!(kc.is_known());
+    }
+
+    #[test]
+    fn malformed_hsv_strings_fall_to_other() {
+        for s in ["HSV_", "HSV_1_2", "HSV_1_2_3_4", "HSV_256_0_0", "HSV_a_b_c"] {
+            assert!(
+                matches!(Keycode::from_str(s), Keycode::Other(_)),
+                "{s} must not parse as RgbColor"
+            );
+        }
+    }
+
+    #[test]
+    fn modifier_all_parses_as_hyper() {
+        // Oryx's ALL_T = QMK's ALL_T(kc) = Hyper.
+        assert_eq!(Modifier::from_str("ALL"), Some(Modifier::Hypr));
     }
 }
